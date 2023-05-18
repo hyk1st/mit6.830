@@ -3,16 +3,12 @@ package simpledb.storage;
 import simpledb.common.Database;
 import simpledb.common.Permissions;
 import simpledb.common.DbException;
-import simpledb.common.DeadlockException;
 import simpledb.transaction.TransactionAbortedException;
 import simpledb.transaction.TransactionId;
 
 import java.io.*;
 
-import java.util.HashMap;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Queue;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -43,8 +39,10 @@ public class BufferPool {
     other classes. BufferPool should use the numPages argument to the
     constructor instead. */
     public static final int DEFAULT_PAGES = 50;
-    public Queue<PageId> queue = new LinkedList<PageId>();
-    public HashMap<PageId, Boolean> inQue= new HashMap<>();
+    public LRU<PageId> lruManage;
+
+    public LockManage lockManage = new LockManage();
+
     /**
      * Creates a BufferPool that caches up to numPages pages.
      *
@@ -54,6 +52,7 @@ public class BufferPool {
         // some code goes here
         this.maxPage = numPages;
         map = new ConcurrentHashMap<>();
+        this.lruManage = new LRU<PageId>();
     }
     public int getMaxPageNum() {
         return this.maxPage;
@@ -90,27 +89,35 @@ public class BufferPool {
     public Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
         // some code goes here
+        int type = perm == Permissions.READ_ONLY? 0 : 1;
+        final long now = System.currentTimeMillis();
+        while (!this.lockManage.acquireLock(pid,tid,type)) {
+            if (System.currentTimeMillis() - now > 1000) {
+                this.transactionComplete(tid, false);
+
+                throw  new TransactionAbortedException();
+            }
+        }
         Page temp = map.get(pid);
         if (temp == null) {
-            if (map.size() >= this.maxPage) {
-                try {
-                    this.evictPage();
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
+            synchronized (lruManage) {
+                if (map.size() >= this.maxPage) {
+                    try {
+                        this.evictPage();
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
                 }
-            }
-            DbFile dbFile = Database.getCatalog().getDatabaseFile(pid.getTableId());
-            temp = dbFile.readPage(pid);
-            if (temp == null) {
-                throw new DbException("no such page");
-            }
+                DbFile dbFile = Database.getCatalog().getDatabaseFile(pid.getTableId());
+                temp = dbFile.readPage(pid);
+                if (temp == null) {
+                    throw new DbException("no such page");
+                }
 //            System.out.println(pid.getPageNumber());
-            map.put(pid, temp);
+                map.put(pid, temp);
+            }
         }
-        if (inQue.get(pid) == null)  {
-            queue.offer(pid);
-            inQue.put(pid, true);
-        }
+        lruManage.put(pid);
         return temp;
     }
 
@@ -126,6 +133,7 @@ public class BufferPool {
     public  void unsafeReleasePage(TransactionId tid, PageId pid) {
         // some code goes here
         // not necessary for lab1|lab2
+        this.lockManage.releaseLock(pid, tid);
     }
 
     /**
@@ -136,13 +144,14 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid) {
         // some code goes here
         // not necessary for lab1|lab2
+        transactionComplete(tid, true);
     }
 
     /** Return true if the specified transaction has a lock on the specified page */
     public boolean holdsLock(TransactionId tid, PageId p) {
         // some code goes here
         // not necessary for lab1|lab2
-        return false;
+        return this.lockManage.holdsLock(p, tid);
     }
 
     /**
@@ -155,6 +164,34 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid, boolean commit) {
         // some code goes here
         // not necessary for lab1|lab2
+        HashSet<PageId> hset = this.lockManage.getPageIdByTid(tid);
+        if (commit) {
+            try {
+                flushPages(tid);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        } else {
+            if (hset == null) {
+                return;
+            }
+            for (PageId pid : hset) {
+                Page page = map.get(pid);
+                if (page == null || page.isDirty() == null) continue;
+                DbFile dbFile = Database.getCatalog().getDatabaseFile(pid.getTableId());
+                Page page1 = dbFile.readPage(pid);
+                if (page1 == null) {
+                    System.out.println("read page error on BufferPool 184");
+                }
+                map.put(pid, page1);
+            }
+        }
+        if (hset == null) {
+            return;
+        }
+        for (PageId pid : hset) {
+            this.lockManage.releaseLock(pid, tid);
+        }
     }
 
     /**
@@ -237,7 +274,6 @@ public class BufferPool {
     public synchronized void flushAllPages() throws IOException {
         // some code goes here
         // not necessary for lab1
-
     }
 
     /** Remove the specific page id from the buffer pool.
@@ -271,6 +307,13 @@ public class BufferPool {
     public synchronized  void flushPages(TransactionId tid) throws IOException {
         // some code goes here
         // not necessary for lab1|lab2
+        Iterator<Map.Entry<PageId, Page>> it =  map.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<PageId, Page> entry = it.next();
+            if (tid.equals(entry.getValue().isDirty())) {
+                flushPage(entry.getKey());
+            }
+        }
     }
 
     /**
@@ -280,17 +323,21 @@ public class BufferPool {
     private synchronized  void evictPage() throws DbException, IOException {
         // some code goes here
         // not necessary for lab1
-        PageId pageId;
-        while (true) {
-            pageId = this.queue.poll();
-            if (map.get(pageId) != null) {
-                break;
+        this.lruManage.initIter();
+        while (this.lruManage.hasNext()) {
+            PageId pid = this.lruManage.next();
+            if (map.get(pid).isDirty() == null) {
+//                System.out.println("find page");
+                this.discardPage(pid);
+                this.lruManage.remove(pid);
+                return;
             }
         }
-        inQue.remove(pageId);
-        if (map.get(pageId).isDirty() != null)
-            this.flushPage(pageId);
-        this.discardPage(pageId);
+//        System.out.println("find error");
+        throw new DbException("all page is dirty");
+//        if (map.get(pageId).isDirty() != null)
+//            this.flushPage(pageId);
+//        this.discardPage(pageId);
     }
 
 }

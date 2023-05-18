@@ -30,7 +30,6 @@ public class HeapFile implements DbFile {
     private File file;
     private TupleDesc tupleDesc;
 
-    private RandomAccessFile randomAccessFile;
 
     /**
      * Constructs a heap file backed by the specified file.
@@ -97,15 +96,15 @@ public class HeapFile implements DbFile {
         byte[] data = new byte[BufferPool.getPageSize()];
         try {
 //            System.out.println("offset " + offset+ ", page " + pid.getPageNumber());
-            this.openFile();
-            this.randomAccessFile.seek(offset);
+            RandomAccessFile randomAccessFile =  new RandomAccessFile(file, "rw");
+            randomAccessFile.seek(offset);
             for (int i = 0; i < BufferPool.getPageSize(); i++) {
-                data[i] = (byte) this.randomAccessFile.read();
+                data[i] = (byte) randomAccessFile.read();
             }
-            this.closeFile();
+            randomAccessFile.close();
             return new HeapPage((HeapPageId) pid, data);
         } catch (Exception e) {
-            System.out.println(e.getMessage()+  "   \nheapfile read page error on " + pid.getPageNumber());
+            System.out.println("error: \n" + e.getMessage()+  "   \nheapfile read page error on " + pid.getPageNumber());
             return null;
         }
     }
@@ -118,10 +117,10 @@ public class HeapFile implements DbFile {
         long offset = (long) (pid.getPageNumber()) * BufferPool.getPageSize();
         try {
 //            System.out.println("offset " + offset+ ", page " + pid.getPageNumber());
-            this.openFile();
-            this.randomAccessFile.seek(offset);
-            this.randomAccessFile.write(page.getPageData());
-            this.closeFile();
+            RandomAccessFile randomAccessFile =  new RandomAccessFile(file, "rw");
+            randomAccessFile.seek(offset);
+            randomAccessFile.write(page.getPageData());
+            randomAccessFile.close();
         } catch (Exception e) {
             System.out.println("write page  page error on " + pid.getPageNumber());
         }
@@ -155,6 +154,7 @@ public class HeapFile implements DbFile {
             break;
         }
         page.insertTuple(t);
+        page.markDirty(true, tid);
         return Collections.singletonList(page);
         // not necessary for lab1
     }
@@ -172,6 +172,7 @@ public class HeapFile implements DbFile {
 
         page = (HeapPage) Database.getBufferPool().getPage(tid, pageId, Permissions.READ_WRITE);
         page.deleteTuple(t);
+        page.markDirty(true, tid);
         return Collections.singletonList(page);
         // not necessary for lab1
     }
@@ -182,20 +183,6 @@ public class HeapFile implements DbFile {
         return new HeapFileIterator(tid);
     }
 
-    public void openFile() {
-        try {
-            this.randomAccessFile = new RandomAccessFile(file, "rw");
-        } catch (FileNotFoundException e) {
-            throw new RuntimeException(e);
-        }
-    }
-    public void closeFile() {
-        try {
-            this.randomAccessFile.close();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-    }
 
     private class HeapFileIterator implements DbFileIterator {
 

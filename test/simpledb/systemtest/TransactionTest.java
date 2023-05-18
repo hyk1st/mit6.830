@@ -246,7 +246,7 @@ public class TransactionTest extends SimpleDbTestBase {
 
         // Insert a new row
         AbortEvictionTest.insertRow(f, t);
-
+        System.out.println("insert finished");
         // Scanning the table must fail because it can't evict the dirty page
         try {
             AbortEvictionTest.findMagicTuple(f, t);
