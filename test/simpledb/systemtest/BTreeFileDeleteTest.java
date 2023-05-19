@@ -76,7 +76,7 @@ public class BTreeFileDeleteTest extends SimpleDbTestBase {
 		BTreeLeafPage rightSibling = (BTreeLeafPage) Database.getBufferPool().getPage(
 				tid, rightSiblingId, Permissions.READ_ONLY);
 		assertTrue(rightSibling.getNumEmptySlots() > 202);
-	} 
+	}
 
 	@Test
 	public void testMergeLeafPages() throws Exception {
@@ -117,7 +117,7 @@ public class BTreeFileDeleteTest extends SimpleDbTestBase {
 				tid, e.getRightChild(), Permissions.READ_ONLY);
 		assertEquals(0, leftChild.getNumEmptySlots());
 		assertEquals(1, rightChild.getNumEmptySlots());
-        assertEquals(e.getKey(), rightChild.iterator().next().getField(0));
+		assertEquals(e.getKey(), rightChild.iterator().next().getField(0));
 
 	}
 
@@ -146,11 +146,11 @@ public class BTreeFileDeleteTest extends SimpleDbTestBase {
 		BTreePageId rootPtrId = BTreeRootPtrPage.getId(twoLeafPageFile.getId());
 		BTreeRootPtrPage rootPtr = (BTreeRootPtrPage) Database.getBufferPool().getPage(
 				tid, rootPtrId, Permissions.READ_ONLY);
-        assertEquals(rootPtr.getRootId().pgcateg(), BTreePageId.LEAF);
+		assertEquals(rootPtr.getRootId().pgcateg(), BTreePageId.LEAF);
 		BTreeLeafPage root = (BTreeLeafPage) Database.getBufferPool().getPage(
 				tid, rootPtr.getRootId(), Permissions.READ_ONLY);
 		assertEquals(1, root.getNumEmptySlots());
-        assertEquals(root.getParentId(), rootPtrId);
+		assertEquals(root.getParentId(), rootPtrId);
 	}
 
 	@Test
@@ -213,7 +213,7 @@ public class BTreeFileDeleteTest extends SimpleDbTestBase {
 		int count = 0;
 		// bring the right internal page to minimum occupancy
 		while(it.hasNext() && count < 49 * 502 + 1) {
-			BTreeLeafPage leaf = (BTreeLeafPage) Database.getBufferPool().getPage(tid, 
+			BTreeLeafPage leaf = (BTreeLeafPage) Database.getBufferPool().getPage(tid,
 					it.next().getLeftChild(), Permissions.READ_ONLY);
 			Tuple t = leaf.iterator().next();
 			Database.getBufferPool().deleteTuple(tid, t);
@@ -226,7 +226,7 @@ public class BTreeFileDeleteTest extends SimpleDbTestBase {
 		assertEquals(252, rightChild.getNumEmptySlots());
 		count = 0;
 		while(it.hasNext() && count < 502) {
-			BTreeLeafPage leaf = (BTreeLeafPage) Database.getBufferPool().getPage(tid, 
+			BTreeLeafPage leaf = (BTreeLeafPage) Database.getBufferPool().getPage(tid,
 					it.next().getLeftChild(), Permissions.READ_ONLY);
 			Tuple t = leaf.iterator().next();
 			Database.getBufferPool().deleteTuple(tid, t);
@@ -251,13 +251,13 @@ public class BTreeFileDeleteTest extends SimpleDbTestBase {
 
 	@Test
 	public void testDeleteInternalPages() throws Exception {
-    	// For this test we will decrease the size of the Buffer Pool pages
-    	BufferPool.setPageSize(1024);
-		
+		// For this test we will decrease the size of the Buffer Pool pages
+		BufferPool.setPageSize(1024);
+
 		// This should create a B+ tree with three nodes in the second tier
 		// and 252 nodes in the third tier
-    	// (124 entries per internal/leaf page, 125 children per internal page ->
-    	// 251*124 + 1 = 31125)
+		// (124 entries per internal/leaf page, 125 children per internal page ->
+		// 251*124 + 1 = 31125)
 		BTreeFile bigFile = BTreeUtility.createRandomBTreeFile(2, 31125,
 				null, null, 0);
 
@@ -349,14 +349,14 @@ public class BTreeFileDeleteTest extends SimpleDbTestBase {
 		BTreePageId rootPtrId = BTreeRootPtrPage.getId(bigFile.getId());
 		rootPtr = (BTreeRootPtrPage) Database.getBufferPool().getPage(
 				tid, rootPtrId, Permissions.READ_ONLY);
-        assertEquals(rootPtr.getRootId().pgcateg(), BTreePageId.INTERNAL);
+		assertEquals(rootPtr.getRootId().pgcateg(), BTreePageId.INTERNAL);
 		root = (BTreeInternalPage) Database.getBufferPool().getPage(
 				tid, rootPtr.getRootId(), Permissions.READ_ONLY);
 		assertEquals(0, root.getNumEmptySlots());
-        assertEquals(root.getParentId(), rootPtrId);
+		assertEquals(root.getParentId(), rootPtrId);
 
 		it.close();
-	}    
+	}
 
 	/**
 	 * JUnit suite target
