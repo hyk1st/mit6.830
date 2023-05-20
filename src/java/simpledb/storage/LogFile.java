@@ -2,6 +2,7 @@
 package simpledb.storage;
 
 import simpledb.common.Database;
+import simpledb.transaction.Transaction;
 import simpledb.transaction.TransactionId;
 import simpledb.common.Debug;
 
@@ -13,7 +14,12 @@ import java.lang.reflect.*;
 LogFile implements the recovery subsystem of SimpleDb.  This class is
 able to write different log records as needed, but it is the
 responsibility of the caller to ensure that write ahead logging and
-two-phase locking discipline are followed.  <p>
+two-phase locking discipline are followed.
+ LogFile实现了SimpleDb的恢复子系统。
+ 这个类能够根据需要写入不同的日志记录，
+ 但是调用者有责任确保提前写入日志和 遵循两阶段锁的纪律。
+
+ <p>
 
 <u> Locking note: </u>
 <p>
@@ -45,15 +51,18 @@ must not be declared synchronized and must begin with a block like:
 
 <li> The first long integer of the file represents the offset of the
 last written checkpoint, or -1 if there are no checkpoints
+ 文件的第一个长整数代表最后写入的检查点的偏移量。最后写入的检查点的偏移量，如果没有检查点，则为-1。
 
 <li> All additional data in the log consists of log records.  Log
 records are variable length.
+ 日志中的所有额外数据都由日志记录组成。 日志 记录的长度是可变的。
 
 <li> Each log record begins with an integer type and a long integer
 transaction id.
-
+ 每条日志记录以一个整数类型和一个长整数的 交易ID。
 <li> Each log record ends with a long integer file offset representing
 the position in the log file where the record began.
+ 每条日志记录的结尾都有一个长的整数文件偏移量，代表该记录在日志文件中开始的位置。记录开始时在日志文件中的位置。
 
 <li> There are five record types: ABORT, COMMIT, UPDATE, BEGIN, and
 CHECKPOINT
@@ -64,13 +73,18 @@ CHECKPOINT
 after image.  These images are serialized Page objects, and can be
 accessed with the LogFile.readPageData() and LogFile.writePageData()
 methods.  See LogFile.print() for an example.
+ 更新记录由两个条目组成，一个之前的图像和一个之后的图像。
+ 这些图像是序列化的 Page 对象，可以用 LogFile.readPageData() 和 LogFile.writePageData() 方法访问。
+ 请参阅LogFile.print()以了解一个例子。
 
 <li> CHECKPOINT records consist of active transactions at the time
 the checkpoint was taken and their first log record on disk.  The format
 of the record is an integer count of the number of transactions, as well
 as a long integer transaction id and a long integer first record offset
 for each active transaction.
-
+ CHECKPOINT记录由检查点发生时的活动事务组成 和它们在磁盘上的第一条日志记录。
+ 记录的格式是一个交易数量的整数，以及一个长整数的交易ID和一个长整数的第一条记录偏移。
+ 以及一个长整数的交易ID和一个长整数的第一个记录偏移量 长整数的交易ID和长整数的第一条记录偏移量，用于每个活动的交易。
 </ul>
 */
 public class LogFile {
@@ -460,6 +474,31 @@ public class LogFile {
             synchronized(this) {
                 preAppend();
                 // some code goes here
+                long firstRecordPos = this.tidToFirstLogRecord.get(tid.getId());
+                this.raf.seek(firstRecordPos);
+                while (true) {
+                    try {
+                        int type = raf.readInt();
+                        long tid2 = raf.readLong();
+                        if (type == UPDATE_RECORD) {
+                            Page temp = readPageData(raf);
+                            readPageData(raf);
+                            if (tid.getId()==tid2) {
+                                Database.getCatalog().getDatabaseFile(temp.getId().getTableId()).writePage(temp);
+                                Database.getBufferPool().discardPage(temp.getId());
+                            }
+                        } else if (type == CHECKPOINT_RECORD) {
+                            int cnt = raf.readInt();
+                            while (cnt-- > 0) {
+                                raf.readLong();
+                                raf.readLong();
+                            }
+                        }
+                        raf.readLong();
+                    } catch (IOException e) {
+                        break;
+                    }
+                }
             }
         }
     }
@@ -487,6 +526,89 @@ public class LogFile {
             synchronized (this) {
                 recoveryUndecided = false;
                 // some code goes here
+                raf.seek(0);
+                long checkPoint = raf.readLong();
+                HashMap<Long, Long> transacionID = new HashMap<>();
+                if (checkPoint != -1) {
+                    raf.seek(checkPoint);
+                    raf.readInt();
+                    raf.readLong();
+                    int cnt = raf.readInt();
+                    while (cnt > 0) {
+                        cnt--;
+                        long tids = raf.readLong();
+                        long offset = raf.readLong();
+                        transacionID.put(tids, offset);
+                    }
+                    raf.readLong();
+                }
+                long checkPointOffset = raf.getFilePointer();
+//                HashMap<Long, List<Page>> oldMap = new HashMap<>();
+                HashSet<Long> commitSet = new HashSet<>();
+                while (true) {
+                    try {
+                        int type = raf.readInt();
+                        long tid = raf.readLong();
+                        if (type == UPDATE_RECORD) {
+                            readPageData(raf);
+                            readPageData(raf);
+                        }
+                        if (type == COMMIT_RECORD) {
+                            commitSet.add(tid);
+                        }
+                        raf.readLong();
+                    }catch (IOException e) {
+                        break;
+                    }
+                }
+                Iterator<Long> iter = transacionID.keySet().iterator();
+                while (iter.hasNext()) {
+                    long tid = iter.next();
+                    if (!commitSet.contains(tid)) {
+                        continue;
+                    }
+                    long off = transacionID.get(tid);
+                    raf.seek(off);
+                    while (raf.getFilePointer() < checkPoint) {
+                        try {
+                            int type = raf.readInt();
+                            long tid2 = raf.readLong();
+                            if (type == UPDATE_RECORD) {
+                                Page old = readPageData(raf);
+                                readPageData(raf);
+                                if (tid2 == tid) {
+                                    Database.getBufferPool().discardPage(old.getId());
+                                    Database.getCatalog().getDatabaseFile(old.getId().getTableId()).writePage(old);
+                                }
+                            }
+                            raf.readLong();
+                        }catch (IOException e) {
+                            break;
+                        }
+                    }
+                }
+                raf.seek(checkPointOffset);
+                while (true) {
+                    try {
+                        int type = raf.readInt();
+                        long tid = raf.readLong();
+                        if (type == UPDATE_RECORD) {
+                            Page old = readPageData(raf);
+                            Page newPage = readPageData(raf);
+                            if (commitSet.contains(tid)) {
+                                Database.getBufferPool().discardPage(newPage.getId());
+                                Database.getCatalog().getDatabaseFile(newPage.getId().getTableId()).writePage(newPage);
+                            } else {
+                                Database.getBufferPool().discardPage(old.getId());
+                                Database.getCatalog().getDatabaseFile(old.getId().getTableId()).writePage(old);
+                            }
+                        }
+                        raf.readLong();
+                    }catch (IOException e) {
+                        break;
+                    }
+                }
+
             }
          }
     }

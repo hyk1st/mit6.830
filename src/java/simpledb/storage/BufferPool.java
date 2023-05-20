@@ -167,7 +167,18 @@ public class BufferPool {
         HashSet<PageId> hset = this.lockManage.getPageIdByTid(tid);
         if (commit) {
             try {
-                flushPages(tid);
+                if (hset == null) {
+                    return;
+                }
+                for (PageId pid : hset) {
+                    Page page = map.get(pid);
+                    if (page == null || page.isDirty() == null) continue;
+                    if (tid.equals(page.isDirty())) {
+                        flushPage(pid);
+                        page.setBeforeImage();
+                    }
+                }
+//                flushPages(tid);
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
@@ -274,6 +285,12 @@ public class BufferPool {
     public synchronized void flushAllPages() throws IOException {
         // some code goes here
         // not necessary for lab1
+        Collection<Page> collection = map.values();
+        for (Page page : collection) {
+            if (page.isDirty() != null) {
+                flushPage(page.getId());
+            }
+        }
     }
 
     /** Remove the specific page id from the buffer pool.
@@ -299,6 +316,12 @@ public class BufferPool {
     private synchronized  void flushPage(PageId pid) throws IOException {
         // some code goes here
         // not necessary for lab1
+        Page p = map.get(pid);
+        TransactionId dirtier = p.isDirty();
+        if (dirtier != null){
+            Database.getLogFile().logWrite(dirtier, p.getBeforeImage(), p);
+            Database.getLogFile().force();
+        }
         Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(map.get(pid));
     }
 

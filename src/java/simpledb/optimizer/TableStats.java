@@ -8,6 +8,7 @@ import simpledb.execution.SeqScan;
 import simpledb.storage.*;
 import simpledb.transaction.Transaction;
 import simpledb.transaction.TransactionAbortedException;
+import simpledb.transaction.TransactionId;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -107,7 +108,7 @@ public class TableStats {
         for (int i = 0; i < tupleDesc.numFields(); i++) {
             hmap.put(i, new ArrayList<>());
         }
-        SeqScan iterator = new SeqScan(null, dbFile.getId());
+        SeqScan iterator = new SeqScan(new TransactionId(), dbFile.getId());
 //        DbFileIterator iterator = dbFile.iterator(null);
         try {
             iterator.open();
